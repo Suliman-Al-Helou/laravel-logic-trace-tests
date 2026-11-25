@@ -31,10 +31,6 @@ it('P-03 duplicate submit', function () {
 - An exception is a valid observation: catch it and record class and message.
 - Do not edit app code to make a probe pass. If a probe cannot run, fix the probe.
 - Compare each result with the row's Code outcome. If a probe shows a different status than the code
-  reading, the gate will force that row to become an EDGE test. Do not hide it.
+  reading, keep it in mind: it is a strong candidate for a GAP in the expect phase. Do not hide it.
 
-Deciding RECOMMENDED later (phase 4), in this order:
-1. A precedent in ANOTHER place of this project that handles the same situation (cite file.php:line).
-   A line that is part of the code under test is not a precedent.
-2. A Laravel documentation page (cite the laravel.com/docs URL).
-3. Neither: `none established`. Never invent a recommendation.
+The recorded results are facts about TODAY's behavior. The next phases decide what the CORRECT behavior is.

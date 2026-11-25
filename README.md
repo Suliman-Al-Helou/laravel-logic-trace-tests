@@ -1,42 +1,49 @@
 # laravel-logic-trace-tests
 
-An [Agent Skill](https://github.com/anthropics/skills) that makes an AI agent write Laravel/PHP tests
-from **evidence**, under a workflow enforced by a script instead of by prose.
+An [Agent Skill](https://github.com/anthropics/skills) that writes **real failing tests** for Laravel/PHP
+features, based on **documented expectations** (project docs, official docs, OWASP), under a workflow
+enforced by a script instead of prose.
 
-For one endpoint, job, command or class it:
+Two goals:
 
-1. traces the real flow (route, middleware, FormRequest, controller, service, model, events, policy),
-2. turns every branch into a decision-table row,
-3. runs **probes** (real requests against the test DB) to observe what actually happens,
-4. writes tests that pin the **current** behavior and record the **recommended** behavior with a
-   one-line reason,
-5. has the script run the tests and generate the report.
+1. **Code exists (audit mode).** Trace the feature, probe it, check whether existing tests really cover edge
+   cases or only the happy path, find the documented correct behavior, and write tests that fail now where the
+   code differs from it.
+2. **Code does not exist yet (spec mode).** Write the tests first from the ticket and from documented
+   guidance. Every test fails now (red). Then the developer builds until green.
 
-```php
-// EDGE: E-03
-// COVERS: D-07
-// VERDICT: DIFFERS
-// CURRENT: second identical POST returns 201 and creates a duplicate order
-// RECOMMENDED: 409 and no duplicate (precedent: app/Http/Controllers/PaymentController.php:58)
-// WHY: client retries after a timeout would double charge
-// EVIDENCE: app/Services/OrderService.php:42 ; probe P-03
+If it cannot find a source for what is correct, it says **UNKNOWN** and asks you. It does not guess.
+
+## Result you get
+
+```
+Summary: POST /api/orders (audit)
+- gaps (tests that must FAIL now): 1
+  * E-01 [D-03]: second identical POST returns 201 ... -> 409 and no second order  (src: docs/ticket.md:10)
+- behaviors confirmed by a source: 2
+- UNKNOWN (no source found, needs your decision): 1
+- Questions for you:
+  ? D-04: Should a guest get 401 or a redirect here?
+- Existing tests: STRONG 1, WEAK 1, NONE 3
+- Red/green proof: 1 fail as intended, 2 pass
+- Web research: YES, 1 source(s), not verified by the script
 ```
 
-## Why a script owns the workflow
+## How it is enforced
 
-Skills are advisory text, and weaker models skip steps or grade their own homework. Here the agent
-runs `lltt.py next` (one phase at a time) and `lltt.py gate` (must pass to advance).
+The agent runs `lltt.py next` (shows only the current phase) and `lltt.py gate` (must pass to advance).
 
-| Weakness of prose-only skills | What this skill does |
+| Phase (audit) | What the gate checks |
 |---|---|
-| Steps get skipped | `next` shows only the current phase; `gate` blocks advancing |
-| Invented facts | every line needs a `file.php:line` that exists; probes must be stamped by a real run |
-| Circular "recommended" behavior | a precedent that is the code under test is rejected |
-| Hidden surprises | a probe that contradicts the code reading forces an EDGE test; edge ids cannot have gaps |
-| "All tests pass" claims | the script runs the tests and writes `.trace/run.json` |
-| Padded or fabricated reports | `finish` generates the report and the final answer |
-| Editing the checker | skill files are hash-checked, `state.json` is signed |
-| Infinite fix loops | 5 failed gates on a phase = `BLOCKED`, stop and report |
+| trace | every statement has a `file.php:line` that exists |
+| decide | snippets copied from the code are found near the cited line; every traced `app/` line has a row |
+| probe | results stamped by `ProbeRecorder` (HMAC), backed by a real probe test |
+| existing | cited tests exist; STRONG is rejected for tests that only assert a success status |
+| expect | doc quotes are found in the doc; web hosts are allowlisted; MATCH must equal the probe's observed status; UNKNOWN needs a question |
+| tests | a test asserts the EXPECTED status; SOURCE and EXPECTED equal expectations.md; no todo/skip; no mocking traced classes |
+| run | the script runs the tests: gaps must FAIL with an assertion, the rest must PASS |
+
+Spec mode runs only `expect`, `tests`, `run`.
 
 ## Install
 
@@ -65,48 +72,48 @@ Copy the whole folder. Do not edit files inside it: the script refuses to run if
 
 From the Laravel project root, name ONE feature:
 
-> Write tests for `POST /api/orders` with the laravel-logic-trace-tests skill.
+> Use laravel-logic-trace-tests on `POST /api/admin/instructors` (code exists, audit mode, web research on).
 
-Docker / Sail users set the runner first: `export LLTT_TEST_CMD='sail artisan test'`.
+> Use laravel-logic-trace-tests in spec mode for the ticket docs/tickets/02-courses.md (no code yet).
 
-You can also drive it by hand:
-
+Manual driving:
 ```bash
-python3 skills/laravel-logic-trace-tests/scripts/lltt.py init --target "POST /api/orders" --type http --lang en
+python3 skills/laravel-logic-trace-tests/scripts/lltt.py init --target "POST /api/orders" --mode audit --web yes --lang en
 python3 skills/laravel-logic-trace-tests/scripts/lltt.py next
 python3 skills/laravel-logic-trace-tests/scripts/lltt.py gate
-python3 skills/laravel-logic-trace-tests/scripts/lltt.py status    # phase and time per phase
+python3 skills/laravel-logic-trace-tests/scripts/lltt.py status
 python3 skills/laravel-logic-trace-tests/scripts/lltt.py finish
 ```
 
-Outputs are in `.trace/`: `logic-map.md`, `decision-table.md`, `probes/`, `run.json`,
-`behavior-report.md`, `run-summary.json`.
+Docker / Sail: `export LLTT_TEST_CMD='sail artisan test'` before `init`. The runner must accept
+`--log-junit=<file>`. Extra allowed web hosts: `export LLTT_WEB_ALLOW=example.com,docs.vendor.io`.
 
 ## Requirements
 
-Laravel project with Pest or PHPUnit and a configured test database (`phpunit.xml` or `.env.testing`),
-`python3` 3.8+, and `php` on PATH (or `LLTT_TEST_CMD`).
+Laravel project with Pest or PHPUnit and a configured test database, `python3` 3.8+, `php` on PATH (or
+`LLTT_TEST_CMD`).
 
 ## What it executes
 
-- `lltt.py init` reads `phpunit.xml`, `composer.json` and runs `php artisan --version`.
-- `lltt.py gate` (phase 5) runs your test command on the test files the agent added. Nothing else.
-- Probes are tests the agent writes under `tests/Probes/`; they run through your test runner and DB config.
+- `init` reads `phpunit.xml`, `composer.json`, runs `php artisan --version`.
+- The `run` gate runs your test command on the test files the agent added, nothing else.
+- Probes are tests the agent writes under `tests/Probes/`; they run through your runner and DB config.
 - The skill declares no `allowed-tools`.
 
 ## Honest limitations
 
-- **Not tamper-proof.** The checks stop skipping, hallucination and lazy self-grading. An agent with
-  shell access that deliberately rewrites `lltt.py` and re-signs state can still cheat. Review the
-  `.trace/` folder if the stakes are high.
-- Not yet evaluated across models. Compliance of small models is the hypothesis, not a result.
-- Developed without a PHP runtime in the test harness: Python checks are covered by 45 unit tests,
-  the PHP/Pest snippets in the references and `ProbeRecorder.php` are not run in CI.
-- Test parsing is regex-based (Pest `it()/test()` and PHPUnit methods); unusual layouts such as data
-  providers or generated tests may be mis-detected.
-- The mock check matches class base names found in the logic map.
-- Linux/macOS tested. Windows paths are untested.
-- Time: probes plus per-file test runs take minutes. Per-phase timing is in `status` and the report.
+- **Web sources are not verified by the script.** It cannot open URLs. It checks the host, requires a verbatim
+  quote, and flags web sources in the report. Open them before trusting a GAP.
+- **Not tamper-proof.** The checks stop skipping, invention and self-grading. An agent with shell access that
+  deliberately rewrites `lltt.py` and re-signs state can still cheat.
+- Not evaluated across models yet. Compliance of small models is a hypothesis.
+- Developed without a PHP runtime: the 64 Python tests use a fake JUnit runner. The PHP/Pest snippets and
+  `ProbeRecorder.php` are not run in CI, and `php artisan test --log-junit=...` should be checked on your setup.
+- Test parsing is regex-based (Pest `it()/test()`, PHPUnit methods). Data providers and generated tests may be
+  mis-detected.
+- Whether a doc quote really supports the Expected text is the agent's judgment; the script checks the quote exists.
+- Mutation testing is not included yet.
+- Linux/macOS tested. Windows paths untested.
 
 ## Develop
 
